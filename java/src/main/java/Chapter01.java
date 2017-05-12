@@ -16,8 +16,10 @@ public class Chapter01 {
         Jedis conn = new Jedis("localhost");
         conn.select(15);
 
+        //创建一个新文章
         String articleId = postArticle(
             conn, "username", "A title", "http://www.google.com");
+        //打印日志
         System.out.println("We posted a new article with id: " + articleId);
         System.out.println("Its HASH looks like:");
         Map<String,String> articleData = conn.hgetAll("article:" + articleId);
@@ -27,14 +29,20 @@ public class Chapter01 {
 
         System.out.println();
 
+        //文章投票
         articleVote(conn, "other_user", "article:" + articleId);
+        
+        //获取文章对象中的评分
         String votes = conn.hget("article:" + articleId, "votes");
         System.out.println("We voted for the article, it now has votes: " + votes);
+        //如果评分小于等于1，抛出异常
         assert Integer.parseInt(votes) > 1;
 
+        //根据页码获取文章信息的集合
         System.out.println("The currently highest-scoring articles are:");
         List<Map<String,String>> articles = getArticles(conn, 1);
         printArticles(articles);
+        //如果评分等于0，抛出异常
         assert articles.size() >= 1;
 
         addGroups(conn, articleId, new String[]{"new-group"});
@@ -44,13 +52,17 @@ public class Chapter01 {
         assert articles.size() >= 1;
     }
 
+    //保存文章信息，生成文章投票用户集合，
     public String postArticle(Jedis conn, String user, String title, String link) {
+        //文章id自增，返回文章id
         String articleId = String.valueOf(conn.incr("article:"));
 
+        //保存给文章投票用户的集合，只保存一周
         String voted = "voted:" + articleId;
         conn.sadd(voted, user);
         conn.expire(voted, ONE_WEEK_IN_SECONDS);
 
+        //保存文章信息
         long now = System.currentTimeMillis() / 1000;
         String article = "article:" + articleId;
         HashMap<String,String> articleData = new HashMap<String,String>();
@@ -60,18 +72,23 @@ public class Chapter01 {
         articleData.put("now", String.valueOf(now));
         articleData.put("votes", "1");
         conn.hmset(article, articleData);
+        //添加到根据文章评分排序的文章有序集合
         conn.zadd("score:", now + VOTE_SCORE, article);
+        //添加到根据文章发布时间排序的文章有序集合
         conn.zadd("time:", now, article);
 
         return articleId;
     }
 
+    //文章投票
     public void articleVote(Jedis conn, String user, String article) {
+        //如果文章时间已经超过一周，则不进行评分增加
         long cutoff = (System.currentTimeMillis() / 1000) - ONE_WEEK_IN_SECONDS;
         if (conn.zscore("time:", article) < cutoff){
             return;
         }
 
+        //向该文章的用户投票集合中添加数据，如果该用户是首次投票，则投票数据自增
         String articleId = article.substring(article.indexOf(':') + 1);
         if (conn.sadd("voted:" + articleId, user) == 1) {
             conn.zincrby("score:", VOTE_SCORE, article);
@@ -80,6 +97,7 @@ public class Chapter01 {
     }
 
 
+    //根据页码获取文章信息的集合
     public List<Map<String,String>> getArticles(Jedis conn, int page) {
         return getArticles(conn, page, "score:");
     }
@@ -88,7 +106,9 @@ public class Chapter01 {
         int start = (page - 1) * ARTICLES_PER_PAGE;
         int end = start + ARTICLES_PER_PAGE - 1;
 
+        //获取范围内所有的文章id
         Set<String> ids = conn.zrevrange(order, start, end);
+        //获取文章的信息
         List<Map<String,String>> articles = new ArrayList<Map<String,String>>();
         for (String id : ids){
             Map<String,String> articleData = conn.hgetAll(id);
